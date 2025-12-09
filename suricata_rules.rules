@@ -1,0 +1,57 @@
+# ============================================================================
+#  SURICATA RULES - ESCENARIO B (TUNED & COMPLETED)
+#  10 Reglas alineadas con documentación y Docker IoT
+# ============================================================================
+
+# --- ESCENARIO M-1: MQTT (Mosquitto Port 1883) ---
+
+# 1) MQTT Connection Flood
+# Detecta si una IP intenta conectar más de 10 veces en 10 segundos.
+drop tcp any any -> any 1883 (msg:"EXP01 MQTT Possible Connection Flood"; flow:to_server; flags:S; threshold: type both, track by_src, count 10, seconds 10; sid:1000001; rev:2;)
+
+# 2) MQTT Large Payload (Heurística simplificada)
+# Detecta payloads mayores a 1500 bytes (típico buffer overflow o garbage).
+drop tcp any any -> any 1883 (msg:"EXP02 MQTT Large Publish Payload"; flow:established,to_server; dsize:>1000; threshold:type both, track by_src, count 1, seconds 60; sid:1000002; rev:18;)
+
+# --- ESCENARIO S-1 & S-2: SmartPlug (HTTP Port 5000) ---
+
+# 3) HTTP Firmware Upload (Multipart)
+# Busca POST a /firmware con cabeceras de subida de archivos real.
+drop http any any -> any 5000 (msg:"EXP03 HTTP Firmware Upload (Multipart)"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/firmware"; http.header; content:"multipart/form-data"; sid:1000003; rev:15;)
+
+# 4) HTTP Login Brute Force
+# Detecta 5 intentos de POST a /login en 20 segundos. (Simplificada para garantizar detección).
+drop http any any -> any 5000 (msg:"EXP04 HTTP Login Brute-Force Detected"; flow:established,to_server; http.method; content:"POST"; http.uri; content:"/login"; threshold:type both, track by_src, count 5, seconds 20; sid:1000004; rev:215;)
+
+
+# --- ESCENARIO W-1: Web Vulnerable (HTTP Port 8080) ---
+
+# 5) SQL Injection (Patterns)
+# Busca patrones comunes como UNION SELECT o comillas sospechosas en la URI.
+drop http any any -> any 8080 (msg:"EXP05 HTTP SQL Injection Pattern"; flow:established,to_server; http.uri; pcre:"/(union.*select|\%27.*or.*1=1)/Ui"; sid:1000005; rev:22;)
+
+# 6) XSS Reflected (Cross-Site Scripting)
+# Busca etiquetas <script> en la URI.
+drop http any any -> any 8080 (msg:"EXP06 HTTP XSS Reflected Pattern"; flow:established,to_server; http.uri; content:"<script>"; nocase; sid:1000006; rev:1;)
+
+
+# --- REGLAS GENÉRICAS / FALLBACK (Para cubrir Escenarios W-2 y Reconocimiento) ---
+
+# 7) HTTP Generic Large Body (Posible Upload Oculto)
+# Si cambian la URL de /firmware, esta regla atrapa cualquier subida grande (>50KB).
+# Busca Content-Length de 5 digitos o más (10,000+ bytes)
+drop http any any -> any any (msg:"EXP07 HTTP Large Request Body (Header)"; flow:established,to_server; http.header; content:"Content-Length"; pcre:"/Content-Length:\s*[0-9]{5,}/"; sid:1000007; rev:3;)
+
+# 8.1) RTSP Describe Flood (Protocolo de Cámaras)
+# (Requerida por documento aunque no haya cámara activa).
+#alert tcp any any -> any 554 (msg:"EXP08.1 RTSP DESCRIBE Flood"; content:"DESCRIBE"; nocase; threshold: type both, track by_src, count 20, seconds 10; sid:1000008.1; rev:1;)
+
+# 8) Network Fast Port Scan (Reconocimiento)
+# Detecta escaneos rápidos (SYN packets) a cualquier puerto.
+drop tcp any any -> any any (msg:"EXP08 Network Fast Port Scan (SYN)"; flags:S; threshold: type both, track by_src, count 100, seconds 10; sid:1000008; rev:1;)
+
+# 9) HTTP High Request Rate (Fuzzing / DoS Web)
+# Detecta herramientas automáticas tipo Gobuster o Dirbuster.
+# Cambiamos 'tcp' por 'http' para evitar falsos positivos con uploads grandes
+#drop http any any -> any any (msg:"EXP09 HTTP High Request Rate (Fuzzing)"; flow:established,to_server; threshold: type both, track by_src, count 5, seconds 60; sid:1000009; rev:3;)
+drop tcp any any -> any 8080 (msg:"EXP09 HTTP Fuzzing (TCP Limit)"; flags:S; threshold: type both, track by_src, count 5, seconds 60; sid:1000009; rev:5;)
